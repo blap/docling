@@ -28,6 +28,7 @@ GRANITEDOCLING_TRANSFORMERS = InlineVlmOptions(
     supported_devices=[
         AcceleratorDevice.CPU,
         AcceleratorDevice.CUDA,
+        AcceleratorDevice.XPU,
     ],
     extra_generation_config=dict(skip_special_tokens=False),
     scale=2.0,
@@ -36,12 +37,8 @@ GRANITEDOCLING_TRANSFORMERS = InlineVlmOptions(
     stop_strings=["</doctag>", "<|end_of_text|>"],
 )
 
-GRANITEDOCLING_VLLM = GRANITEDOCLING_TRANSFORMERS.model_copy()
+GRANITEDOCLING_VLLM = GRANITEDOCLING_TRANSFORMERS.model_copy(deep=True)
 GRANITEDOCLING_VLLM.inference_framework = InferenceFramework.VLLM
-GRANITEDOCLING_VLLM.revision = (
-    "untied"  # change back to "main" with next vllm relase after 0.10.2
-)
-
 
 GRANITEDOCLING_MLX = InlineVlmOptions(
     repo_id="ibm-granite/granite-docling-258M-mlx",
@@ -55,9 +52,29 @@ GRANITEDOCLING_MLX = InlineVlmOptions(
     stop_strings=["</doctag>", "<|end_of_text|>"],
 )
 
+GRANITEDOCLING_VLLM_API = ApiVlmOptions(
+    url="http://localhost:8000/v1/chat/completions",  # LM studio defaults to port 1234, VLLM to 8000
+    params=dict(
+        model=GRANITEDOCLING_TRANSFORMERS.repo_id,
+        max_tokens=4096,
+        skip_special_tokens=True,
+    ),
+    prompt=GRANITEDOCLING_TRANSFORMERS.prompt,
+    timeout=90,
+    scale=2.0,
+    temperature=0.0,
+    concurrency=4,
+    stop_strings=["</doctag>", "<|end_of_text|>"],
+    response_format=ResponseFormat.DOCTAGS,
+)
+
+GRANITEDOCLING_OLLAMA = GRANITEDOCLING_VLLM_API.model_copy(deep=True)
+GRANITEDOCLING_OLLAMA.url = AnyUrl("http://localhost:11434/v1/chat/completions")
+GRANITEDOCLING_OLLAMA.params["model"] = "ibm/granite-docling:258m"
+
 # SmolDocling
 SMOLDOCLING_MLX = InlineVlmOptions(
-    repo_id="ds4sd/SmolDocling-256M-preview-mlx-bf16",
+    repo_id="docling-project/SmolDocling-256M-preview-mlx-bf16",
     prompt="Convert this page to docling.",
     response_format=ResponseFormat.DOCTAGS,
     inference_framework=InferenceFramework.MLX,
@@ -68,7 +85,7 @@ SMOLDOCLING_MLX = InlineVlmOptions(
 )
 
 SMOLDOCLING_TRANSFORMERS = InlineVlmOptions(
-    repo_id="ds4sd/SmolDocling-256M-preview",
+    repo_id="docling-project/SmolDocling-256M-preview",
     prompt="Convert this page to docling.",
     response_format=ResponseFormat.DOCTAGS,
     inference_framework=InferenceFramework.TRANSFORMERS,
@@ -76,6 +93,7 @@ SMOLDOCLING_TRANSFORMERS = InlineVlmOptions(
     supported_devices=[
         AcceleratorDevice.CPU,
         AcceleratorDevice.CUDA,
+        AcceleratorDevice.XPU,
     ],
     torch_dtype="bfloat16",
     scale=2.0,
@@ -84,12 +102,13 @@ SMOLDOCLING_TRANSFORMERS = InlineVlmOptions(
 )
 
 SMOLDOCLING_VLLM = InlineVlmOptions(
-    repo_id="ds4sd/SmolDocling-256M-preview",
+    repo_id="docling-project/SmolDocling-256M-preview",
     prompt="Convert this page to docling.",
     response_format=ResponseFormat.DOCTAGS,
     inference_framework=InferenceFramework.VLLM,
     supported_devices=[
         AcceleratorDevice.CUDA,
+        AcceleratorDevice.XPU,
     ],
     scale=2.0,
     temperature=0.0,
@@ -107,6 +126,7 @@ SMOLVLM256_TRANSFORMERS = InlineVlmOptions(
         AcceleratorDevice.CPU,
         AcceleratorDevice.CUDA,
         # AcceleratorDevice.MPS,
+        AcceleratorDevice.XPU,
     ],
     torch_dtype="bfloat16",
     scale=2.0,
@@ -134,6 +154,7 @@ SMOLVLM256_VLLM = InlineVlmOptions(
     inference_framework=InferenceFramework.VLLM,
     supported_devices=[
         AcceleratorDevice.CUDA,
+        AcceleratorDevice.XPU,
     ],
     scale=2.0,
     temperature=0.0,
@@ -151,6 +172,7 @@ GRANITE_VISION_TRANSFORMERS = InlineVlmOptions(
         AcceleratorDevice.CPU,
         AcceleratorDevice.CUDA,
         AcceleratorDevice.MPS,
+        AcceleratorDevice.XPU,
     ],
     scale=2.0,
     temperature=0.0,
@@ -163,6 +185,7 @@ GRANITE_VISION_VLLM = InlineVlmOptions(
     inference_framework=InferenceFramework.VLLM,
     supported_devices=[
         AcceleratorDevice.CUDA,
+        AcceleratorDevice.XPU,
     ],
     scale=2.0,
     temperature=0.0,
@@ -185,7 +208,11 @@ PIXTRAL_12B_TRANSFORMERS = InlineVlmOptions(
     response_format=ResponseFormat.MARKDOWN,
     inference_framework=InferenceFramework.TRANSFORMERS,
     transformers_model_type=TransformersModelType.AUTOMODEL_VISION2SEQ,
-    supported_devices=[AcceleratorDevice.CPU, AcceleratorDevice.CUDA],
+    supported_devices=[
+        AcceleratorDevice.CPU,
+        AcceleratorDevice.CUDA,
+        AcceleratorDevice.XPU,
+    ],
     scale=2.0,
     temperature=0.0,
 )
@@ -208,7 +235,11 @@ PHI4_TRANSFORMERS = InlineVlmOptions(
     response_format=ResponseFormat.MARKDOWN,
     inference_framework=InferenceFramework.TRANSFORMERS,
     transformers_model_type=TransformersModelType.AUTOMODEL_CAUSALLM,
-    supported_devices=[AcceleratorDevice.CPU, AcceleratorDevice.CUDA],
+    supported_devices=[
+        AcceleratorDevice.CPU,
+        AcceleratorDevice.CUDA,
+        AcceleratorDevice.XPU,
+    ],
     scale=2.0,
     temperature=0.0,
     extra_generation_config=dict(num_logits_to_keep=0),
@@ -237,6 +268,7 @@ GOT2_TRANSFORMERS = InlineVlmOptions(
         AcceleratorDevice.CPU,
         AcceleratorDevice.CUDA,
         #    AcceleratorDevice.MPS,
+        AcceleratorDevice.XPU,
     ],
     scale=2.0,
     temperature=0.0,
@@ -279,14 +311,32 @@ DOLPHIN_TRANSFORMERS = InlineVlmOptions(
         AcceleratorDevice.CUDA,
         AcceleratorDevice.CPU,
         AcceleratorDevice.MPS,
+        AcceleratorDevice.XPU,
     ],
     scale=2.0,
     temperature=0.0,
 )
 
+# DeepSeek-OCR
+DEEPSEEKOCR_OLLAMA = ApiVlmOptions(
+    url="http://localhost:11434/v1/chat/completions",
+    params=dict(
+        model="deepseek-ocr:3b",
+        max_tokens=4096,
+        skip_special_tokens=True,
+    ),
+    prompt="<|grounding|>Convert the document to markdown. ",
+    timeout=90,
+    scale=2.0,
+    temperature=0.0,
+    concurrency=4,
+    response_format=ResponseFormat.DEEPSEEKOCR_MARKDOWN,
+)
+
 # NuExtract
 NU_EXTRACT_2B_TRANSFORMERS = InlineVlmOptions(
     repo_id="numind/NuExtract-2.0-2B",
+    revision="fe5b2f0b63b81150721435a3ca1129a75c59c74e",  # 489efed leads to MPS issues
     prompt="",  # This won't be used, template is passed separately
     torch_dtype="bfloat16",
     inference_framework=InferenceFramework.TRANSFORMERS,
@@ -296,6 +346,7 @@ NU_EXTRACT_2B_TRANSFORMERS = InlineVlmOptions(
         AcceleratorDevice.CPU,
         AcceleratorDevice.CUDA,
         AcceleratorDevice.MPS,
+        AcceleratorDevice.XPU,
     ],
     scale=2.0,
     temperature=0.0,
@@ -311,3 +362,4 @@ class VlmModelType(str, Enum):
     GOT_OCR_2 = "got_ocr_2"
     GRANITEDOCLING = "granite_docling"
     GRANITEDOCLING_VLLM = "granite_docling_vllm"
+    DEEPSEEKOCR_OLLAMA = "deepseekocr_ollama"

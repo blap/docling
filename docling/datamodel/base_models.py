@@ -24,6 +24,7 @@ from pydantic import (
     FieldSerializationInfo,
     computed_field,
     field_serializer,
+    field_validator,
 )
 
 if TYPE_CHECKING:
@@ -74,6 +75,7 @@ class InputFormat(str, Enum):
 class OutputFormat(str, Enum):
     MARKDOWN = "md"
     JSON = "json"
+    YAML = "yaml"
     HTML = "html"
     HTML_SPLIT_PAGE = "html_split_page"
     TEXT = "text"
@@ -94,7 +96,7 @@ FormatToExtensions: dict[InputFormat, list[str]] = {
     InputFormat.XML_USPTO: ["xml", "txt"],
     InputFormat.METS_GBS: ["tar.gz"],
     InputFormat.JSON_DOCLING: ["json"],
-    InputFormat.AUDIO: ["wav", "mp3"],
+    InputFormat.AUDIO: ["wav", "mp3", "m4a", "aac", "ogg", "flac", "mp4", "avi", "mov"],
     InputFormat.VTT: ["vtt"],
 }
 
@@ -128,7 +130,22 @@ FormatToMimeType: dict[InputFormat, list[str]] = {
     InputFormat.XML_USPTO: ["application/xml", "text/plain"],
     InputFormat.METS_GBS: ["application/mets+xml"],
     InputFormat.JSON_DOCLING: ["application/json"],
-    InputFormat.AUDIO: ["audio/x-wav", "audio/mpeg", "audio/wav", "audio/mp3"],
+    InputFormat.AUDIO: [
+        "audio/x-wav",
+        "audio/mpeg",
+        "audio/wav",
+        "audio/mp3",
+        "audio/mp4",
+        "audio/m4a",
+        "audio/aac",
+        "audio/ogg",
+        "audio/flac",
+        "audio/x-flac",
+        "video/mp4",
+        "video/avi",
+        "video/x-msvideo",
+        "video/quicktime",
+    ],
     InputFormat.VTT: ["text/vtt"],
 }
 
@@ -149,6 +166,14 @@ class DoclingComponentType(str, Enum):
     MODEL = "model"
     DOC_ASSEMBLER = "doc_assembler"
     USER_INPUT = "user_input"
+    PIPELINE = "pipeline"
+
+
+class VlmStopReason(str, Enum):
+    LENGTH = "length"  # max tokens reached
+    STOP_SEQUENCE = "stop_sequence"  # Custom stopping criteria met
+    END_OF_SEQUENCE = "end_of_sequence"  # Model generated end-of-text token
+    UNSPECIFIED = "unspecified"  # Defaul none value
 
 
 class ErrorItem(BaseModel):
@@ -192,6 +217,9 @@ class VlmPrediction(BaseModel):
     text: str = ""
     generated_tokens: list[VlmPredictionToken] = []
     generation_time: float = -1
+    num_tokens: Optional[int] = None
+    stop_reason: VlmStopReason = VlmStopReason.UNSPECIFIED
+    input_prompt: Optional[str] = None
 
 
 class ContainerElement(
@@ -376,6 +404,18 @@ class PageConfidenceScores(BaseModel):
     layout_score: ScoreValue = np.nan
     table_score: ScoreValue = np.nan
     ocr_score: ScoreValue = np.nan
+
+    # Accept null/None or string "NaN" values on input and coerce to np.nan
+    @field_validator(
+        "parse_score", "layout_score", "table_score", "ocr_score", mode="before"
+    )
+    @classmethod
+    def _coerce_none_or_nan_str(cls, v):
+        if v is None:
+            return np.nan
+        if isinstance(v, str) and v.strip().lower() in {"nan", "null", "none", ""}:
+            return np.nan
+        return v
 
     def _score_to_grade(self, score: ScoreValue) -> QualityGrade:
         if score < 0.5:

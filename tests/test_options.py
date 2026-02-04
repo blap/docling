@@ -15,6 +15,7 @@ from docling.datamodel.pipeline_options import (
     TableFormerMode,
 )
 from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.pipeline.legacy_standard_pdf_pipeline import LegacyStandardPdfPipeline
 
 
 @pytest.fixture
@@ -49,10 +50,13 @@ def test_accelerator_options():
     # Use API
     ao2 = AcceleratorOptions(num_threads=2, device=AcceleratorDevice.MPS)
     ao3 = AcceleratorOptions(num_threads=3, device=AcceleratorDevice.CUDA)
+    ao4 = AcceleratorOptions(num_threads=4, device=AcceleratorDevice.XPU)
     assert ao2.num_threads == 2
     assert ao2.device == AcceleratorDevice.MPS
     assert ao3.num_threads == 3
     assert ao3.device == AcceleratorDevice.CUDA
+    assert ao4.num_threads == 4
+    assert ao4.device == AcceleratorDevice.XPU
 
     # Use envvars (regular + alternative) and default values
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -66,15 +70,15 @@ def test_accelerator_options():
 
     # Use envvars and override in init
     os.environ["DOCLING_DEVICE"] = "cpu"
-    ao4 = AcceleratorOptions(num_threads=5, device=AcceleratorDevice.MPS)
-    assert ao4.num_threads == 5
-    assert ao4.device == AcceleratorDevice.MPS
+    ao5 = AcceleratorOptions(num_threads=5, device=AcceleratorDevice.MPS)
+    assert ao5.num_threads == 5
+    assert ao5.device == AcceleratorDevice.MPS
 
     # Use regular and alternative envvar
     os.environ["DOCLING_NUM_THREADS"] = "2"
-    ao5 = AcceleratorOptions()
-    assert ao5.num_threads == 2
-    assert ao5.device == AcceleratorDevice.CPU
+    ao6 = AcceleratorOptions()
+    assert ao6.num_threads == 2
+    assert ao6.device == AcceleratorDevice.CPU
 
     # Use wrong values
     is_exception = False
@@ -90,9 +94,9 @@ def test_accelerator_options():
     del os.environ["DOCLING_NUM_THREADS"]
     del os.environ["DOCLING_DEVICE"]
     os.environ["OMP_NUM_THREADS"] = "wrong"
-    ao6 = AcceleratorOptions()
-    assert ao6.num_threads == 4
-    assert ao6.device == AcceleratorDevice.AUTO
+    ao7 = AcceleratorOptions()
+    assert ao7.num_threads == 4
+    assert ao7.device == AcceleratorDevice.AUTO
 
 
 def test_e2e_conversions(test_doc_path):
@@ -116,6 +120,33 @@ def test_page_range(test_doc_path):
         test_doc_path, page_range=(10, 10), raises_on_error=False
     )
     assert doc_result.status == ConversionStatus.FAILURE
+
+
+def test_document_timeout(test_doc_path):
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=PdfPipelineOptions(document_timeout=1)
+            )
+        }
+    )
+    result = converter.convert(test_doc_path)
+    assert result.status == ConversionStatus.PARTIAL_SUCCESS, (
+        "Expected document timeout to be used"
+    )
+
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=PdfPipelineOptions(document_timeout=1),
+                pipeline_cls=LegacyStandardPdfPipeline,
+            )
+        }
+    )
+    result = converter.convert(test_doc_path)
+    assert result.status == ConversionStatus.PARTIAL_SUCCESS, (
+        "Expected document timeout to be used"
+    )
 
 
 def test_ocr_coverage_threshold(test_doc_path):

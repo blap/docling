@@ -3,21 +3,26 @@ import logging
 import sys
 import threading
 import time
+import warnings
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import partial
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Type, Union
+from typing import Optional, Type, Union
 
-from pydantic import BaseModel, ConfigDict, model_validator, validate_call
+from pydantic import ConfigDict, model_validator, validate_call
+from typing_extensions import Self
 
-from docling.backend.abstract_backend import AbstractDocumentBackend
+from docling.backend.abstract_backend import (
+    AbstractDocumentBackend,
+)
 from docling.backend.asciidoc_backend import AsciiDocBackend
 from docling.backend.csv_backend import CsvDocumentBackend
 from docling.backend.docling_parse_v4_backend import DoclingParseV4DocumentBackend
 from docling.backend.html_backend import HTMLDocumentBackend
+from docling.backend.image_backend import ImageDocumentBackend
 from docling.backend.json.docling_json_backend import DoclingJSONBackend
 from docling.backend.md_backend import MarkdownDocumentBackend
 from docling.backend.mets_gbs_backend import MetsGbsDocumentBackend
@@ -28,6 +33,12 @@ from docling.backend.noop_backend import NoOpBackend
 from docling.backend.webvtt_backend import WebVTTDocumentBackend
 from docling.backend.xml.jats_backend import JatsDocumentBackend
 from docling.backend.xml.uspto_backend import PatentUsptoDocumentBackend
+from docling.datamodel.backend_options import (
+    BackendOptions,
+    HTMLBackendOptions,
+    MarkdownBackendOptions,
+    PdfBackendOptions,
+)
 from docling.datamodel.base_models import (
     BaseFormatOption,
     ConversionStatus,
@@ -61,11 +72,13 @@ _PIPELINE_CACHE_LOCK = threading.Lock()
 
 class FormatOption(BaseFormatOption):
     pipeline_cls: Type[BasePipeline]
+    backend_options: Optional[BackendOptions] = None
 
     @model_validator(mode="after")
-    def set_optional_field_default(self) -> "FormatOption":
+    def set_optional_field_default(self) -> Self:
         if self.pipeline_options is None:
             self.pipeline_options = self.pipeline_cls.get_default_options()
+
         return self
 
 
@@ -92,6 +105,7 @@ class PowerpointFormatOption(FormatOption):
 class MarkdownFormatOption(FormatOption):
     pipeline_cls: Type = SimplePipeline
     backend: Type[AbstractDocumentBackend] = MarkdownDocumentBackend
+    backend_options: Optional[MarkdownBackendOptions] = None
 
 
 class AsciiDocFormatOption(FormatOption):
@@ -102,6 +116,7 @@ class AsciiDocFormatOption(FormatOption):
 class HTMLFormatOption(FormatOption):
     pipeline_cls: Type = SimplePipeline
     backend: Type[AbstractDocumentBackend] = HTMLDocumentBackend
+    backend_options: Optional[HTMLBackendOptions] = None
 
 
 class PatentUsptoFormatOption(FormatOption):
@@ -116,12 +131,13 @@ class XMLJatsFormatOption(FormatOption):
 
 class ImageFormatOption(FormatOption):
     pipeline_cls: Type = StandardPdfPipeline
-    backend: Type[AbstractDocumentBackend] = DoclingParseV4DocumentBackend
+    backend: Type[AbstractDocumentBackend] = ImageDocumentBackend
 
 
 class PdfFormatOption(FormatOption):
     pipeline_cls: Type = StandardPdfPipeline
     backend: Type[AbstractDocumentBackend] = DoclingParseV4DocumentBackend
+    backend_options: Optional[PdfBackendOptions] = None
 
 
 class AudioFormatOption(FormatOption):
@@ -131,46 +147,24 @@ class AudioFormatOption(FormatOption):
 
 def _get_default_option(format: InputFormat) -> FormatOption:
     format_to_default_options = {
-        InputFormat.CSV: FormatOption(
-            pipeline_cls=SimplePipeline, backend=CsvDocumentBackend
-        ),
-        InputFormat.XLSX: FormatOption(
-            pipeline_cls=SimplePipeline, backend=MsExcelDocumentBackend
-        ),
-        InputFormat.DOCX: FormatOption(
-            pipeline_cls=SimplePipeline, backend=MsWordDocumentBackend
-        ),
-        InputFormat.PPTX: FormatOption(
-            pipeline_cls=SimplePipeline, backend=MsPowerpointDocumentBackend
-        ),
-        InputFormat.MD: FormatOption(
-            pipeline_cls=SimplePipeline, backend=MarkdownDocumentBackend
-        ),
-        InputFormat.ASCIIDOC: FormatOption(
-            pipeline_cls=SimplePipeline, backend=AsciiDocBackend
-        ),
-        InputFormat.HTML: FormatOption(
-            pipeline_cls=SimplePipeline, backend=HTMLDocumentBackend
-        ),
-        InputFormat.XML_USPTO: FormatOption(
-            pipeline_cls=SimplePipeline, backend=PatentUsptoDocumentBackend
-        ),
-        InputFormat.XML_JATS: FormatOption(
-            pipeline_cls=SimplePipeline, backend=JatsDocumentBackend
-        ),
+        InputFormat.CSV: CsvFormatOption(),
+        InputFormat.XLSX: ExcelFormatOption(),
+        InputFormat.DOCX: WordFormatOption(),
+        InputFormat.PPTX: PowerpointFormatOption(),
+        InputFormat.MD: MarkdownFormatOption(),
+        InputFormat.ASCIIDOC: AsciiDocFormatOption(),
+        InputFormat.HTML: HTMLFormatOption(),
+        InputFormat.XML_USPTO: PatentUsptoFormatOption(),
+        InputFormat.XML_JATS: XMLJatsFormatOption(),
         InputFormat.METS_GBS: FormatOption(
             pipeline_cls=StandardPdfPipeline, backend=MetsGbsDocumentBackend
         ),
-        InputFormat.IMAGE: FormatOption(
-            pipeline_cls=StandardPdfPipeline, backend=DoclingParseV4DocumentBackend
-        ),
-        InputFormat.PDF: FormatOption(
-            pipeline_cls=StandardPdfPipeline, backend=DoclingParseV4DocumentBackend
-        ),
+        InputFormat.IMAGE: ImageFormatOption(),
+        InputFormat.PDF: PdfFormatOption(),
         InputFormat.JSON_DOCLING: FormatOption(
             pipeline_cls=SimplePipeline, backend=DoclingJSONBackend
         ),
-        InputFormat.AUDIO: FormatOption(pipeline_cls=AsrPipeline, backend=NoOpBackend),
+        InputFormat.AUDIO: AudioFormatOption(),
         InputFormat.VTT: FormatOption(
             pipeline_cls=SimplePipeline, backend=WebVTTDocumentBackend
         ),
@@ -182,26 +176,76 @@ def _get_default_option(format: InputFormat) -> FormatOption:
 
 
 class DocumentConverter:
+    """Convert documents of various input formats to Docling documents.
+
+    `DocumentConverter` is the main entry point for converting documents in Docling.
+    It handles various input formats (PDF, DOCX, PPTX, images, HTML, Markdown, etc.)
+    and provides both single-document and batch conversion capabilities.
+
+    The conversion methods return a `ConversionResult` instance for each document,
+    which wraps a `DoclingDocument` object if the conversion was successful, along
+    with metadata about the conversion process.
+
+    Attributes:
+        allowed_formats: Allowed input formats.
+        format_to_options: Mapping of formats to their options.
+        initialized_pipelines: Cache of initialized pipelines keyed by
+            (pipeline class, options hash).
+    """
+
     _default_download_filename = "file"
 
     def __init__(
         self,
-        allowed_formats: Optional[List[InputFormat]] = None,
-        format_options: Optional[Dict[InputFormat, FormatOption]] = None,
-    ):
-        self.allowed_formats = (
+        allowed_formats: Optional[list[InputFormat]] = None,
+        format_options: Optional[dict[InputFormat, FormatOption]] = None,
+    ) -> None:
+        """Initialize the converter based on format preferences.
+
+        Args:
+            allowed_formats: List of allowed input formats. By default, any
+                format supported by Docling is allowed.
+            format_options: Dictionary of format-specific options.
+        """
+        self.allowed_formats: list[InputFormat] = (
             allowed_formats if allowed_formats is not None else list(InputFormat)
         )
-        self.format_to_options: Dict[InputFormat, FormatOption] = {
+
+        # Normalize format options: ensure IMAGE format uses ImageDocumentBackend
+        # for backward compatibility (old code might use PdfFormatOption or other backends for images)
+        normalized_format_options: dict[InputFormat, FormatOption] = {}
+        if format_options:
+            for format, option in format_options.items():
+                if (
+                    format == InputFormat.IMAGE
+                    and option.backend is not ImageDocumentBackend
+                ):
+                    warnings.warn(
+                        f"Using {option.backend.__name__} for InputFormat.IMAGE is deprecated. "
+                        "Images should use ImageDocumentBackend via ImageFormatOption. "
+                        "Automatically correcting the backend, please update your code to avoid this warning.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                    # Convert to ImageFormatOption while preserving pipeline and backend options
+                    normalized_format_options[format] = ImageFormatOption(
+                        pipeline_cls=option.pipeline_cls,
+                        pipeline_options=option.pipeline_options,
+                        backend_options=option.backend_options,
+                    )
+                else:
+                    normalized_format_options[format] = option
+
+        self.format_to_options: dict[InputFormat, FormatOption] = {
             format: (
                 _get_default_option(format=format)
-                if (custom_option := (format_options or {}).get(format)) is None
+                if (custom_option := normalized_format_options.get(format)) is None
                 else custom_option
             )
             for format in self.allowed_formats
         }
-        self.initialized_pipelines: Dict[
-            Tuple[Type[BasePipeline], str], BasePipeline
+        self.initialized_pipelines: dict[
+            tuple[Type[BasePipeline], str], BasePipeline
         ] = {}
 
     def _get_initialized_pipelines(
@@ -217,7 +261,19 @@ class DocumentConverter:
         ).hexdigest()
 
     def initialize_pipeline(self, format: InputFormat):
-        """Initialize the conversion pipeline for the selected format."""
+        """Initialize the conversion pipeline for the selected format.
+
+        Args:
+            format: The input format for which to initialize the pipeline.
+
+        Raises:
+            ConversionError: If no pipeline could be initialized for the
+                given format.
+            RuntimeError: If `artifacts_path` is set in
+                `docling.datamodel.settings.settings` when required by
+                the pipeline, but points to a non-directory file.
+            FileNotFoundError: If local model files are not found.
+        """
         pipeline = self._get_pipeline(doc_format=format)
         if pipeline is None:
             raise ConversionError(
@@ -228,12 +284,36 @@ class DocumentConverter:
     def convert(
         self,
         source: Union[Path, str, DocumentStream],  # TODO review naming
-        headers: Optional[Dict[str, str]] = None,
+        headers: Optional[dict[str, str]] = None,
         raises_on_error: bool = True,
         max_num_pages: int = sys.maxsize,
         max_file_size: int = sys.maxsize,
         page_range: PageRange = DEFAULT_PAGE_RANGE,
     ) -> ConversionResult:
+        """Convert one document fetched from a file path, URL, or DocumentStream.
+
+        Note: If the document content is given as a string (Markdown or HTML
+        content), use the `convert_string` method.
+
+        Args:
+            source: Source of input document given as file path, URL, or
+                DocumentStream.
+            headers: Optional headers given as a dictionary of string key-value pairs,
+                in case of URL input source.
+            raises_on_error: Whether to raise an error on the first conversion failure.
+                If False, errors are captured in the ConversionResult objects.
+            max_num_pages: Maximum number of pages accepted per document.
+                Documents exceeding this number will not be converted.
+            max_file_size: Maximum file size to convert.
+            page_range: Range of pages to convert.
+
+        Returns:
+            The conversion result, which contains a `DoclingDocument` in the `document`
+                attribute, and metadata about the conversion process.
+
+        Raises:
+            ConversionError: An error occurred during conversion.
+        """
         all_res = self.convert_all(
             source=[source],
             raises_on_error=raises_on_error,
@@ -248,12 +328,32 @@ class DocumentConverter:
     def convert_all(
         self,
         source: Iterable[Union[Path, str, DocumentStream]],  # TODO review naming
-        headers: Optional[Dict[str, str]] = None,
-        raises_on_error: bool = True,  # True: raises on first conversion error; False: does not raise on conv error
+        headers: Optional[dict[str, str]] = None,
+        raises_on_error: bool = True,
         max_num_pages: int = sys.maxsize,
         max_file_size: int = sys.maxsize,
         page_range: PageRange = DEFAULT_PAGE_RANGE,
     ) -> Iterator[ConversionResult]:
+        """Convert multiple documents from file paths, URLs, or DocumentStreams.
+
+        Args:
+            source: Source of input documents given as an iterable of file paths, URLs,
+                or DocumentStreams.
+            headers: Optional headers given as a (single) dictionary of string
+                key-value pairs, in case of URL input source.
+            raises_on_error: Whether to raise an error on the first conversion failure.
+            max_num_pages: Maximum number of pages to convert.
+            max_file_size: Maximum number of pages accepted per document. Documents
+                exceeding this number will be skipped.
+            page_range: Range of pages to convert in each document.
+
+        Yields:
+            The conversion results, each containing a `DoclingDocument` in the
+                `document` attribute and metadata about the conversion process.
+
+        Raises:
+            ConversionError: An error occurred during conversion.
+        """
         limits = DocumentLimits(
             max_num_pages=max_num_pages,
             max_file_size=max_file_size,
@@ -271,15 +371,21 @@ class DocumentConverter:
                 ConversionStatus.SUCCESS,
                 ConversionStatus.PARTIAL_SUCCESS,
             }:
+                error_details = ""
+                if conv_res.errors:
+                    error_messages = [err.error_message for err in conv_res.errors]
+                    error_details = f" Errors: {'; '.join(error_messages)}"
                 raise ConversionError(
-                    f"Conversion failed for: {conv_res.input.file} with status: {conv_res.status}"
+                    f"Conversion failed for: {conv_res.input.file} with status: "
+                    f"{conv_res.status}.{error_details}"
                 )
             else:
                 yield conv_res
 
         if not had_result and raises_on_error:
             raise ConversionError(
-                "Conversion failed because the provided file has no recognizable format or it wasn't in the list of allowed formats."
+                "Conversion failed because the provided file has no recognizable "
+                "format or it wasn't in the list of allowed formats."
             )
 
     @validate_call(config=ConfigDict(strict=True))
@@ -287,8 +393,29 @@ class DocumentConverter:
         self,
         content: str,
         format: InputFormat,
-        name: Optional[str],
+        name: Optional[str] = None,
     ) -> ConversionResult:
+        """Convert a document given as a string using the specified format.
+
+        Only Markdown (`InputFormat.MD`) and HTML (`InputFormat.HTML`) formats
+        are supported. The content is wrapped in a `DocumentStream` and passed
+        to the main conversion pipeline.
+
+        Args:
+            content: The document content as a string.
+            format: The format of the input content.
+            name: The filename to associate with the document. If not provided, a
+                timestamp-based name is generated. The appropriate file extension (`md`
+                or `html`) is appended if missing.
+
+        Returns:
+            The conversion result, which contains a `DoclingDocument` in the `document`
+                attribute, and metadata about the conversion process.
+
+        Raises:
+            ValueError: If format is neither `InputFormat.MD` nor `InputFormat.HTML`.
+            ConversionError: An error occurred during conversion.
+        """
         name = name or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
         if format == InputFormat.MD:

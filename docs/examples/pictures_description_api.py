@@ -96,10 +96,14 @@ def watsonx_vlm_options():
         print(f"{api_out=}")
         return api_out["access_token"]
 
+    # Background information in case the model_id is updated:
+    # [1] Official list of models: https://dataplatform.cloud.ibm.com/docs/content/wsj/analyze-data/fm-models.html?context=wx
+    # [2] Info on granite vision 3.3: https://dataplatform.cloud.ibm.com/docs/content/wsj/analyze-data/fm-models-ibm.html?context=wx#granite-vision-3-3-2b
+
     options = PictureDescriptionApiOptions(
         url="https://us-south.ml.cloud.ibm.com/ml/v1/text/chat?version=2023-05-29",
         params=dict(
-            model_id="ibm/granite-vision-3-2-2b",
+            model_id="ibm/granite-vision-3-3-2b",
             project_id=project_id,
             parameters=dict(
                 max_new_tokens=400,
@@ -172,7 +176,7 @@ def main():
             print(
                 f"Picture {element.self_ref}\n"
                 f"Caption: {element.caption_text(doc=result.document)}\n"
-                f"Annotations: {element.annotations}"
+                f"Meta: {element.meta}"
             )
 
 
